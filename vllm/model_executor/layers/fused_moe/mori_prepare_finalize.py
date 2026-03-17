@@ -70,16 +70,15 @@ class MoriPrepareAndFinalize(mk.FusedMoEPrepareAndFinalizeModular):
         - Optional dispatched expert topk IDs
         - Optional dispatched expert topk weight
         """
-        if defer_input_quant:
-            raise NotImplementedError(
-                f"{self.__class__.__name__} does not support defer_input_quant=True. "
-                "Please select an MoE kernel that accepts quantized inputs."
-            )
         assert not apply_router_weight_on_input, (
             "mori does not support apply_router_weight_on_input=True now."
         )
         scale = None
-        if self.use_fp8_dispatch:
+        if defer_input_quant:
+            # Expert kernel (e.g. AITER) quantizes inputs internally.
+            # Dispatch raw BF16 data; 2x RDMA bandwidth vs FP8 dispatch.
+            pass
+        elif self.use_fp8_dispatch:
             from aiter import QuantType, get_hip_quant
 
             if quant_config.is_block_quantized:
