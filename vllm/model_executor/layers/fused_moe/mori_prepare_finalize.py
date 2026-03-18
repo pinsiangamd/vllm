@@ -49,6 +49,20 @@ class MoriPrepareAndFinalize(mk.FusedMoEPrepareAndFinalizeModular):
     def supports_async(self) -> bool:
         return False
 
+    def post_init_setup(self, fused_experts: mk.FusedMoEExperts):
+        super().post_init_setup(fused_experts)
+        if self.use_fp8_dispatch:
+            from vllm.model_executor.layers.fused_moe.rocm_aiter_fused_moe import (
+                AiterExperts,
+            )
+
+            if isinstance(fused_experts, AiterExperts):
+                fused_experts._accepts_prequantized_fp8 = True
+                logger.info_once(
+                    "AITER FP8 dispatch enabled: tokens dispatched as FP8 "
+                    "over MORI RDMA (2x bandwidth savings vs BF16)."
+                )
+
     def prepare(
         self,
         a1: torch.Tensor,

@@ -293,9 +293,16 @@ def rocm_aiter_fused_experts(
 
 
 class AiterExperts(mk.FusedMoEExpertsModular):
+    def __init__(self, moe_config, quant_config, **kwargs):
+        super().__init__(moe_config, quant_config, **kwargs)
+        # When True, AITER accepts pre-quantized FP8 inputs from the
+        # dispatch backend (e.g. MORI) instead of quantizing internally.
+        # Set by MoriPrepareAndFinalize.post_init_setup() at init time.
+        self._accepts_prequantized_fp8 = False
+
     @property
     def expects_unquantized_inputs(self) -> bool:
-        return True
+        return not self._accepts_prequantized_fp8
 
     @staticmethod
     def activation_format() -> mk.FusedMoEActivationFormat:
