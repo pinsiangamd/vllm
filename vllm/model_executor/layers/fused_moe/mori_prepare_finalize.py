@@ -11,6 +11,16 @@ from vllm.platforms import current_platform
 
 logger = init_logger(__name__)
 
+# Kernel launch configs tuned for prefill (large batch) vs decode (small batch).
+# Prefill: more blocks + warps to saturate GPU with many tokens.
+# Decode: fewer blocks + warps to reduce launch overhead with few tokens.
+_PREFILL_BLOCK_NUM = 128
+_PREFILL_WARP_PER_BLOCK = 16
+_DECODE_BLOCK_NUM = 64
+_DECODE_WARP_PER_BLOCK = 4
+# Threshold: batches with more tokens than this use prefill config.
+_PREFILL_TOKEN_THRESHOLD = 64
+
 
 class MoriPrepareAndFinalize(mk.FusedMoEPrepareAndFinalizeModular):
     """
@@ -29,6 +39,13 @@ class MoriPrepareAndFinalize(mk.FusedMoEPrepareAndFinalizeModular):
         self.num_dispatchers_ = num_dispatchers
         self.max_tokens_per_rank = max_tokens_per_rank
         self.use_fp8_dispatch = use_fp8_dispatch
+
+    @staticmethod
+    def _launch_config(num_tokens: int) -> tuple[int, int]:
+        """Select MORI kernel launch config based on batch size."""
+        if num_tokens > _PREFILL_TOKEN_THRESHOLD:
+            return _PREFILL_BLOCK_NUM, _PREFILL_WARP_PER_BLOCK
+        return _DECODE_BLOCK_NUM, _DECODE_WARP_PER_BLOCK
 
     @property
     def activation_format(self) -> mk.FusedMoEActivationFormat:
@@ -102,13 +119,16 @@ class MoriPrepareAndFinalize(mk.FusedMoEPrepareAndFinalizeModular):
                 quant_func = get_hip_quant(QuantType.per_Token)
                 a1, scale = quant_func(a1, quant_dtype=current_platform.fp8_dtype())
 
+        block_num, warp_per_block = self._launch_config(a1.shape[0])
         (
             dispatch_a1,
             dispatch_weights,
             dispatch_scale,
             dispatch_ids,
             dispatch_recv_token_num,
-        ) = self.mori_op.dispatch(a1, topk_weights, scale, topk_ids)
+        ) = self.mori_op.dispatch(
+            a1, topk_weights, scale, topk_ids, block_num, warp_per_block
+        )
 
         expert_tokens_meta = mk.ExpertTokensMetadata(
             expert_num_tokens=dispatch_recv_token_num, expert_num_tokens_cpu=None
@@ -132,9 +152,12 @@ class MoriPrepareAndFinalize(mk.FusedMoEPrepareAndFinalizeModular):
         weight_and_reduce_impl: mk.TopKWeightAndReduce,
     ) -> None:
         num_token = output.shape[0]
+        block_num, warp_per_block = self._launch_config(num_token)
         result = self.mori_op.combine(
             fused_expert_output,
             None,
             topk_ids,
+            block_num,
+            warp_per_block,
         )[0]
         output.copy_(result[:num_token])
