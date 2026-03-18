@@ -688,6 +688,18 @@ class FusedMoE(CustomOp):
         prepare_finalize = self.base_quant_method.maybe_make_prepare_finalize(
             routing_tables=routing_tables
         )
+        if prepare_finalize is None and (
+            self.moe_parallel_config.use_mori_kernels
+            or self.moe_parallel_config.use_deepep_ht_kernels
+            or self.moe_parallel_config.use_deepep_ll_kernels
+        ):
+            raise ValueError(
+                f"all2all backend "
+                f"'{self.moe_parallel_config.all2all_backend}' requires "
+                f"modular kernel prepare/finalize, but "
+                f"{type(self.base_quant_method).__name__} returned None. "
+                f"This would silently skip inter-GPU token dispatch."
+            )
         if prepare_finalize is not None:
             logger.debug(
                 "%s for %s(%s)", prepare_finalize.__class__.__name__, self, id(self)
